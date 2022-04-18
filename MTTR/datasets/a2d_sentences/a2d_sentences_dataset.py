@@ -47,7 +47,7 @@ class A2DSentencesDataset(Dataset):
 
     @staticmethod
     def get_text_annotations(root_path, subset, distributed):
-        saved_annotations_file_path = f'./datasets/a2d_sentences/a2d_sentences_single_frame_{subset}_annotations.json'
+        saved_annotations_file_path = f'./datasets/a2d_sentences/with_inverse_a2d_sentences_single_frame_{subset}_annotations.json'
         if path.exists(saved_annotations_file_path):
             with open(saved_annotations_file_path, 'r') as f:
                 text_annotations_by_frame = [tuple(a) for a in json.load(f)]
@@ -98,9 +98,10 @@ class A2DSentencesDataset(Dataset):
         return text_annotations_by_frame
 
     def __getitem__(self, idx):
-        text_query, video_id, frame_idx, instance_id = self.text_annotations[idx]
+        text_query_original, text_query_inverse, video_id, frame_idx, instance_id = self.text_annotations[idx]
 
-        text_query = " ".join(text_query.lower().split())  # clean up the text query
+        text_query_original = " ".join(text_query_original.lower().split())  # clean up the text query
+        text_query_inverse = " ".join(text_query_inverse.lower().split())  # clean up the text query
 
         # read the source window frames:
         video_frames, _, _ = read_video(path.join(self.videos_dir, f'{video_id}.mp4'), pts_unit='sec')  # (T, H, W, C)
@@ -142,8 +143,8 @@ class A2DSentencesDataset(Dataset):
         targets = self.window_size * [None]
         center_frame_idx = self.window_size // 2
         targets[center_frame_idx] = target
-        source_frames, targets, text_query = self.transforms(source_frames, targets, text_query)
-        return source_frames, targets, text_query
+        source_frames, targets, text_query_original, text_query_inverse = self.transforms(source_frames, targets, text_query_original, text_query_inverse)
+        return source_frames, targets, text_query_original, text_query_inverse
 
     def __len__(self):
         return len(self.text_annotations)
@@ -164,26 +165,28 @@ class A2dSentencesTransforms:
         transforms.extend([T.ToTensor(), normalize])
         self.size_transforms = T.Compose(transforms)
 
-    def __call__(self, source_frames, targets, text_query):
+    def __call__(self, source_frames, targets, text_query_original, text_query_inverse):
         if self.h_flip_augmentation and torch.rand(1) > 0.5:
             source_frames = [F.hflip(f) for f in source_frames]
             targets[len(targets) // 2]['masks'] = F.hflip(targets[len(targets) // 2]['masks'])
             # Note - is it possible for both 'right' and 'left' to appear together in the same query. hence this fix:
-            text_query = text_query.replace('left', '@').replace('right', 'left').replace('@', 'right')
+            text_query_original = text_query_original.replace('left', '@').replace('right', 'left').replace('@', 'right')
+            text_query_inverse = text_query_inverse.replace('left', '@').replace('right', 'left').replace('@', 'right')
         source_frames, targets = list(zip(*[self.size_transforms(f, t) for f, t in zip(source_frames, targets)]))
         source_frames = torch.stack(source_frames)  # [T, 3, H, W]
-        return source_frames, targets, text_query
+        return source_frames, targets, text_query_original, text_query_inverse
 
 
 class Collator:
     def __call__(self, batch):
-        samples, targets, text_queries = list(zip(*batch))
+        samples, targets, text_queries_original, text_queries_inverse = list(zip(*batch))
         samples = nested_tensor_from_videos_list(samples)  # [T, B, C, H, W]
         # convert targets to a list of tuples. outer list - time steps, inner tuples - time step batch
         targets = list(zip(*targets))
         batch_dict = {
             'samples': samples,
             'targets': targets,
-            'text_queries': text_queries
+            'text_queries_original': text_queries_original,
+            'text_queries_inverse': text_queries_inverse
         }
         return batch_dict
