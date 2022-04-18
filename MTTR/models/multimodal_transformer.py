@@ -48,28 +48,41 @@ class MultimodalTransformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, vid_embeds, vid_pad_mask, text_queries, obj_queries):
+        # prepare for contrastive learning, output encoding for text and videos
+        if (type(text_queries) == tuple):
+            text_queries_original = text_queries[0]
+            text_queries_inverse = text_queries[1]
+        else: 
+            text_queries_original, text_queries_inverse = text_queries, text_queries
+            
         device = vid_embeds.device
         t, b, _, h, w = vid_embeds.shape
 
-        txt_memory, txt_pad_mask = self.forward_text(text_queries, device)
+        txt_memory_original, txt_pad_mask_original = self.forward_text(text_queries_original, device)
+        txt_memory_inverse, txt_pad_mask_inverse = self.forward_text(text_queries_inverse, device)
+        
         # add temporal dim to txt memory & padding mask:
-        txt_memory = repeat(txt_memory, 's b c -> s (t b) c', t=t)
-        txt_pad_mask = repeat(txt_pad_mask, 'b s -> (t b) s', t=t)
+        txt_memory_original = repeat(txt_memory_original, 's b c -> s (t b) c', t=t)
+        txt_memory_inverse = repeat(txt_memory_inverse, 's b c -> s (t b) c', t=t)
+        txt_pad_mask_original = repeat(txt_pad_mask_original, 'b s -> (t b) s', t=t)
+        txt_pad_mask_inverse = repeat(txt_pad_mask_inverse, 'b s -> (t b) s', t=t)
 
         vid_embeds = rearrange(vid_embeds, 't b c h w -> (h w) (t b) c')
         # Concat the image & text embeddings on the sequence dimension
-        encoder_src_seq = torch.cat((vid_embeds, txt_memory), dim=0)
-        seq_mask = torch.cat((rearrange(vid_pad_mask, 't b h w -> (t b) (h w)'), txt_pad_mask), dim=1)
+        encoder_src_seq_original = torch.cat((vid_embeds, txt_memory_original), dim=0)
+        # encoder_src_seq_inverse = torch.cat((vid_embeds, txt_memory_inverse), dim=0)
+        
+        seq_mask = torch.cat((rearrange(vid_pad_mask, 't b h w -> (t b) (h w)'), txt_pad_mask_original), dim=1)
         # vid_pos_embed is: [T*B, H, W, d_model]
         vid_pos_embed = self.pos_encoder_2d(rearrange(vid_pad_mask, 't b h w -> (t b) h w'), self.d_model)
         # use zeros in place of pos embeds for the text sequence:
-        pos_embed = torch.cat((rearrange(vid_pos_embed, 't_b h w c -> (h w) t_b c'), torch.zeros_like(txt_memory)), dim=0)
+        pos_embed = torch.cat((rearrange(vid_pos_embed, 't_b h w c -> (h w) t_b c'), torch.zeros_like(txt_memory_original)), dim=0)
 
-        memory = self.encoder(encoder_src_seq, src_key_padding_mask=seq_mask, pos=pos_embed)  # [S, T*B, C]
+        memory = self.encoder(encoder_src_seq_original, src_key_padding_mask=seq_mask, pos=pos_embed)  # [S, T*B, C]
         vid_memory = rearrange(memory[:h*w, :, :], '(h w) (t b) c -> t b c h w', h=h, w=w, t=t, b=b)
         txt_memory = memory[h*w:, :, :]
         txt_memory = rearrange(txt_memory, 's t_b c -> t_b s c')
-        txt_memory = [t_mem[~pad_mask] for t_mem, pad_mask in zip(txt_memory, txt_pad_mask)]  # remove padding
+        txt_memory = [t_mem[~pad_mask] for t_mem, pad_mask in zip(txt_memory, txt_pad_mask_original)]  # remove padding
 
         # add T*B dims to query embeds (was: [N, C], where N is the number of object queries):
         obj_queries = repeat(obj_queries, 'n c -> n (t b) c', t=t, b=b)
@@ -78,7 +91,7 @@ class MultimodalTransformer(nn.Module):
         # hs is [L, N, T*B, C] where L is number of layers in the decoder
         hs = self.decoder(tgt, memory, memory_key_padding_mask=seq_mask, pos=pos_embed, query_pos=obj_queries)
         hs = rearrange(hs, 'l n (t b) c -> l t b n c', t=t, b=b)
-        return hs, vid_memory, txt_memory
+        return hs, vid_memory, txt_memory, (txt_memory_original, txt_memory_inverse)
 
     def forward_text(self, text_queries, device):
         tokenized_queries = self.tokenizer.batch_encode_plus(text_queries, padding='longest', return_tensors='pt')

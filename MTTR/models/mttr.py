@@ -14,6 +14,19 @@ from models.criterion import SetCriterion
 from models.postprocessing import A2DSentencesPostProcess, ReferYoutubeVOSPostProcess
 from einops import rearrange
 
+class UpsampleModel(nn.Module):
+    def __init__(self):
+        super(UpsampleModel, self).__init__()
+        self.sample1 = nn.Upsample(62)
+        self.up1 = nn.ConvTranspose1d(2, 2, 6, stride=2, bias=False, padding=0)
+        self.up2 = nn.ConvTranspose1d(2, 2, 2, stride=2, bias=False)
+
+    def forward(self, x):
+        x = self.sample1(x)
+        x = self.up1(x)
+        x = self.up2(x)
+        return x
+
 
 class MTTR(nn.Module):
     """ The main module of the Multimodal Tracking Transformer """
@@ -33,6 +46,9 @@ class MTTR(nn.Module):
         self.instance_kernels_head = MLP(d_model, d_model, output_dim=mask_kernels_dim, num_layers=2)
         self.obj_queries = nn.Embedding(num_queries, d_model)  # pos embeddings for the object queries
         self.vid_embed_proj = nn.Conv2d(self.backbone.layer_output_channels[-1], d_model, kernel_size=1)
+        # upsample mask from (_, 2, 50) to (_, 2, 256)
+        self.mask_proj_model = UpsampleModel()
+        # usage: self.mask_proj_model(prediction_mask).shape
         self.spatial_decoder = FPNSpatialDecoder(d_model, self.backbone.layer_output_channels[:-1][::-1], mask_kernels_dim)
         self.aux_loss = aux_loss
 
@@ -62,13 +78,14 @@ class MTTR(nn.Module):
         vid_embeds = rearrange(vid_embeds, 't b c h w -> (t b) c h w')
         vid_embeds = self.vid_embed_proj(vid_embeds)
         vid_embeds = rearrange(vid_embeds, '(t b) c h w -> t b c h w', t=T, b=B)
-
+        
         transformer_out = self.transformer(vid_embeds, vid_pad_mask, text_queries, self.obj_queries.weight)
+            
         # hs is: [L, T, B, N, D] where L is number of decoder layers
         # vid_memory is: [T, B, D, H, W]
         # txt_memory is a list of length T*B of [S, C] where S might be different for each sentence
         # encoder_middle_layer_outputs is a list of [T, B, H, W, D]
-        hs, vid_memory, txt_memory = transformer_out
+        hs, vid_memory, txt_memory, (positive_encoded_txt, negative_encoded_txt) = transformer_out
 
         vid_memory = rearrange(vid_memory, 't b d h w -> (t b) d h w')
         bbone_middle_layer_outputs = [rearrange(o.tensors, 't b d h w -> (t b) d h w') for o in backbone_out[:-1][::-1]]
@@ -87,7 +104,15 @@ class MTTR(nn.Module):
         out = layer_outputs[-1]  # the output for the last decoder layer is used by default
         if self.aux_loss:
             out['aux_outputs'] = layer_outputs[:-1]
-        return out
+        
+        # combining mask and text
+        # make sure mask's dimension is (_, 2, 256)
+        prediction_mask = out['pred_masks']
+        t, b, _, h, w = prediction_mask.shape
+        prediction_mask = rearrange(prediction_mask, 't b c h w -> (h w) (t b) c')
+        prediction_mask = self.mask_proj_model(prediction_mask)
+        mask_text = torch.cat((prediction_mask, positive_encoded_txt), dim=0)
+        return out, prediction_mask, (positive_encoded_txt, negative_encoded_txt)
 
     def num_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

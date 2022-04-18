@@ -26,6 +26,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 import misc as utils
 from models import build_model
 from models.swin_transformer import compute_mask
+from contrastive_loss import ContrastiveLoss
 
 
 class Trainer:
@@ -127,10 +128,12 @@ class Trainer:
                 self.sampler_train.set_epoch(self.epoch)
             total_epoch_loss = 0
             loss_sums_dict = {k: 0 for k in self.criterion.weight_dict.keys()}
+
             for batch_dict in tqdm(self.data_loader_train, disable=not utils.is_main_process()):
                 samples = batch_dict['samples'].to(self.device)
                 targets = to_device(batch_dict['targets'], self.device)
-                text_queries = batch_dict['text_queries']
+                text_queries_original = batch_dict['text_queries_original']
+                text_queries_inverse = batch_dict['text_queries_inverse']
 
                 # keep only the valid targets (targets of frames which are annotated). for example, in a2d-sentences
                 # only the center frame in each window is annotated.
@@ -138,7 +141,12 @@ class Trainer:
                 targets = [targets[i] for i in valid_indices.tolist()]
 
                 with amp.autocast(enabled=self.config.enable_amp):
-                    outputs = self.model(samples, valid_indices, text_queries)
+                    outputs, prediction_mask, (positive_encoded_txt, negative_encoded_txt) \
+                        = self.model(samples, valid_indices, (text_queries_original, text_queries_inverse))
+                    # add contrastive loss here
+                    # import pdb; pdb.set_trace()
+                    contrastive_loss = ContrastiveLoss(prediction_mask, positive_encoded_txt, negative_encoded_txt)
+                    
                     loss_dict = self.criterion(outputs, targets)
                     weight_dict = self.criterion.weight_dict
                     losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -201,13 +209,14 @@ class Trainer:
         for batch_dict in tqdm(self.data_loader_val, disable=not self.is_main_process):
             samples = batch_dict['samples'].to(self.device)
             targets = to_device(batch_dict['targets'], self.device)
-            text_queries = batch_dict['text_queries']
+            text_queries_original = batch_dict['text_queries_original']
+            text_queries_inverse = batch_dict['text_queries_inverse']
 
             # keep only the valid targets (targets of frames which are annotated):
             valid_indices = torch.tensor([i for i, t in enumerate(targets) if None not in t]).to(self.device)
             targets = [targets[i] for i in valid_indices.tolist()]
 
-            outputs = self.model(samples, valid_indices, text_queries)
+            outputs = self.model(samples, valid_indices, text_queries_original)
             outputs.pop('aux_outputs', None)
 
             outputs, targets = flatten_temporal_batch_dims(outputs, targets)
