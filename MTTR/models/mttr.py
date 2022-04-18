@@ -18,8 +18,8 @@ class UpsampleModel(nn.Module):
     def __init__(self):
         super(UpsampleModel, self).__init__()
         self.sample1 = nn.Upsample(62)
-        self.up1 = nn.ConvTranspose1d(2, 2, 6, stride=2, bias=False, padding=0)
-        self.up2 = nn.ConvTranspose1d(2, 2, 2, stride=2, bias=False)
+        self.up1 = nn.ConvTranspose1d(1, 1, 6, stride=2, bias=False, padding=0)
+        self.up2 = nn.ConvTranspose1d(1, 1, 2, stride=2, bias=False)
 
     def forward(self, x):
         x = self.sample1(x)
@@ -107,12 +107,21 @@ class MTTR(nn.Module):
         
         # combining mask and text
         # make sure mask's dimension is (_, 2, 256)
-        prediction_mask = out['pred_masks']
-        t, b, _, h, w = prediction_mask.shape
-        prediction_mask = rearrange(prediction_mask, 't b c h w -> (h w) (t b) c')
-        prediction_mask = self.mask_proj_model(prediction_mask)
-        mask_text = torch.cat((prediction_mask, positive_encoded_txt), dim=0)
-        return out, prediction_mask, (positive_encoded_txt, negative_encoded_txt)
+        prediction_mask = out['pred_masks'].squeeze()
+        
+        # seperate prediction masks and reshape them to (_, 2, 256)
+        prediction_masks = torch.split(prediction_mask, 1)
+        prediction_masks_dim = []
+        
+        for i in range(len(prediction_masks)):
+            prediction_mask = prediction_masks[i].unsqueeze(0)
+            t, b, _, h, w = prediction_mask.shape
+            prediction_mask = rearrange(prediction_mask, 't b c h w -> (h w) (t b) c')
+            prediction_mask = self.mask_proj_model(prediction_mask)
+            prediction_masks_dim.append(prediction_mask)
+            # mask_text = torch.cat((prediction_mask, positive_encoded_txt), dim=0)
+            
+        return out, prediction_masks, (positive_encoded_txt, negative_encoded_txt)
 
     def num_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
