@@ -222,9 +222,9 @@ class Trainer:
             # keep only the valid targets (targets of frames which are annotated):
             valid_indices = torch.tensor([i for i, t in enumerate(targets) if None not in t]).to(self.device)
             targets = [targets[i] for i in valid_indices.tolist()]
-
-            outputs = self.model(samples, valid_indices, text_queries_original)
+            outputs, _, _ = self.model(samples, valid_indices, text_queries_original)
             outputs.pop('aux_outputs', None)
+            import pdb; pdb.set_trace()
 
             outputs, targets = flatten_temporal_batch_dims(outputs, targets)
             processed_outputs = self.postprocessor(outputs, resized_padded_sample_size=samples.tensors.shape[-2:],
@@ -246,6 +246,7 @@ class Trainer:
         if self.is_main_process:
             coco_gt = COCO(self.config.dataset_coco_gt_format_path)
             coco_pred = coco_gt.loadRes(predictions)
+            # import pdb; pdb.set_trace()
             coco_eval = COCOeval(coco_gt, coco_pred, iouType='segm')
             coco_eval.params.useCats = 0  # ignore categories as they are not predicted in ref-vos task
             coco_eval.evaluate()
@@ -271,7 +272,7 @@ class Trainer:
             samples = batch_dict['samples'].to(self.device)
             valid_indices = torch.arange(len(samples.tensors)).to(self.device)
             text_queries = batch_dict['text_queries']
-            outputs = self.model(samples, valid_indices, text_queries)
+            outputs, _, _ = self.model(samples, valid_indices, text_queries)
             videos_metadata = batch_dict['videos_metadata']
             sample_shape_with_padding = samples.tensors.shape[-2:]
             preds_by_video = self.postprocessor(outputs, videos_metadata, sample_shape_with_padding)

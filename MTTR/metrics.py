@@ -26,10 +26,15 @@ def calculate_precision_at_k_and_iou_metrics(coco_gt: COCO, coco_pred: COCO):
         gt_annot = coco_gt.imgToAnns[instance][0]
         gt_mask = decode(gt_annot['segmentation'])
         pred_annots = coco_pred.imgToAnns[instance]
-        pred_annot = sorted(pred_annots, key=lambda a: a['score'])[-1]  # choose pred with highest score
+        if (len(pred_annots) != 0):
+            pred_annot = sorted(pred_annots, key=lambda a: a['score'])[-1]  # choose pred with highest score
         pred_mask = decode(pred_annot['segmentation'])
-        iou, intersection, union = compute_iou(torch.tensor(pred_mask).unsqueeze(0),
+        try:
+            iou, intersection, union = compute_iou(torch.tensor(pred_mask).unsqueeze(0),
                                                torch.tensor(gt_mask).unsqueeze(0))
+        except:
+            import pdb; pdb.set_trace()
+            print()
         iou, intersection, union = iou.item(), intersection.item(), union.item()
         for iou_threshold in counters_by_iou.keys():
             if iou > iou_threshold:

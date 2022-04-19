@@ -47,7 +47,7 @@ class A2DSentencesDataset(Dataset):
 
     @staticmethod
     def get_text_annotations(root_path, subset, distributed):
-        saved_annotations_file_path = f'./datasets/a2d_sentences/with_inverse_a2d_sentences_single_frame_{subset}_annotations.json'
+        saved_annotations_file_path = f'./datasets/a2d_sentences/partial_with_inverse_a2d_sentences_single_frame_{subset}_annotations.json'
         if path.exists(saved_annotations_file_path):
             with open(saved_annotations_file_path, 'r') as f:
                 text_annotations_by_frame = [tuple(a) for a in json.load(f)]

@@ -95,7 +95,7 @@ class MTTR(nn.Module):
         # output masks is: [L, T, B, N, H_mask, W_mask]
         output_masks = torch.einsum('ltbnc,tbchw->ltbnhw', instance_kernels, decoded_frame_features)
         outputs_is_referred = self.is_referred_head(hs)  # [L, T, B, N, 2]
-
+        
         layer_outputs = []
         for pm, pir in zip(output_masks, outputs_is_referred):
             layer_out = {'pred_masks': pm,
@@ -114,13 +114,17 @@ class MTTR(nn.Module):
         prediction_masks_dim = []
         
         for i in range(len(prediction_masks)):
-            prediction_mask = prediction_masks[i].unsqueeze(0)
-            t, b, _, h, w = prediction_mask.shape
-            prediction_mask = rearrange(prediction_mask, 't b c h w -> (h w) (t b) c')
-            prediction_mask = self.mask_proj_model(prediction_mask)
-            prediction_masks_dim.append(prediction_mask)
-            # mask_text = torch.cat((prediction_mask, positive_encoded_txt), dim=0)
-            
+            try:
+                prediction_mask = prediction_masks[i].unsqueeze(0)
+                t, b, _, h, w = prediction_mask.shape
+                prediction_mask = rearrange(prediction_mask, 't b c h w -> (h w) (t b) c')
+                prediction_mask = self.mask_proj_model(prediction_mask)
+                prediction_masks_dim.append(prediction_mask)
+                # mask_text = torch.cat((prediction_mask, positive_encoded_txt), dim=0)
+            except:
+                import pdb; pdb.set_trace()
+                print()
+
         return out, prediction_masks_dim, (positive_encoded_txt, negative_encoded_txt)
 
     def num_parameters(self):
