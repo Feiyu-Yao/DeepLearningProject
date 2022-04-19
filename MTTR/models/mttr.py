@@ -121,7 +121,7 @@ class MTTR(nn.Module):
             prediction_masks_dim.append(prediction_mask)
             # mask_text = torch.cat((prediction_mask, positive_encoded_txt), dim=0)
             
-        return out, prediction_masks, (positive_encoded_txt, negative_encoded_txt)
+        return out, prediction_masks_dim, (positive_encoded_txt, negative_encoded_txt)
 
     def num_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
