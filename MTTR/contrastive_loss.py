@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 import numpy as np
 
 # every operation should be pytorch
@@ -15,7 +16,7 @@ class ContrastiveLoss(nn.Module):
         self.total_loss = 0
         self.temperature = temperature
         
-    def forward(self, prediction_mask, positive_encoded_txt, negative_encoded_txt):
+    def forward(self, prediction_mask, positive_encoded_txt, negative_encoded_txt, device):
         '''
         "pred_masks": Tensor of dim [time, batch_size, num_queries, H, W] with the predicted masks logits
         make pairs
@@ -27,10 +28,9 @@ class ContrastiveLoss(nn.Module):
         for each mask in outputs:
             compute contrastive loss
         '''
-        import pdb; pdb.set_trace()
         positive, negative = [], []
-        for i in len(prediction_mask):
-            for j in len(positive_encoded_txt):
+        for i in range(len(prediction_mask)):
+            for j in range(len(positive_encoded_txt)):
                 if (i == j):
                     mask, ptext, ntext = prediction_mask[i], positive_encoded_txt[j], negative_encoded_txt[j]
                     mask_text = torch.cat((mask, ptext), dim=0)
@@ -40,16 +40,26 @@ class ContrastiveLoss(nn.Module):
                     negative.append(mask_text)
                     
         positive_pairs, negative_pairs = [], []
-        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+        cos = nn.CosineSimilarity(dim=0, eps=1e-6)
         # group and duplicate all positive pairs
         for i in range(len(positive)):
-            positive_pairs.append(np.exp(cos(positive[i], positive[i])/self.temperature))
-            negative_pairs.append(np.exp(cos(positive[i], negative[i])/self.temperature))
+            p, n = torch.flatten(positive[i]), torch.flatten(negative[i])
             
-        total = np.sum([np.sum(negative_pairs), np.sum(positive_pairs)])
+            # pad p or n in case they are not the same length
+            mask = torch.zeros(abs(p.shape[0] - n.shape[0])).to(device)
+            if (p.shape[0] > n.shape[0]):
+                n = torch.cat((n, mask), dim=0)
+            else:
+                p = torch.cat((p, mask), dim=0)
+            
+            # import pdb; pdb.set_trace()     
+            positive_pairs.append(torch.exp(cos(p, p)/self.temperature))
+            negative_pairs.append(torch.exp(cos(p, n)/self.temperature))
+            
+        total = torch.stack([torch.stack(negative_pairs).sum(dim=0), torch.stack(positive_pairs).sum(dim=0)]).sum(dim=0)
             
         # compute loss
         for p in positive_pairs:
-            self.total_loss += - np.log(p/total)
+            self.total_loss += - torch.log(torch.divide(p, total))
         
         return self.total_loss

@@ -59,18 +59,28 @@ class MultimodalTransformer(nn.Module):
         t, b, _, h, w = vid_embeds.shape
 
         txt_memory_original, txt_pad_mask_original = self.forward_text(text_queries_original, device)
-        txt_memory_inverse, txt_pad_mask_inverse = self.forward_text(text_queries_inverse, device)
         
         # add temporal dim to txt memory & padding mask:
         txt_memory_original = repeat(txt_memory_original, 's b c -> s (t b) c', t=t)
-        txt_memory_inverse = repeat(txt_memory_inverse, 's b c -> s (t b) c', t=t)
         txt_pad_mask_original = repeat(txt_pad_mask_original, 'b s -> (t b) s', t=t)
-        txt_pad_mask_inverse = repeat(txt_pad_mask_inverse, 'b s -> (t b) s', t=t)
+        
+        # seperate each sentence and get text encoding
+        sentence_original_memory, sentence_inverse_memory = [], []
+        for i in range(len(text_queries_original)):
+            sentence = [text_queries_original[i]]
+            sentence_mem, _ = self.forward_text(sentence, device)
+            sentence_mem = repeat(sentence_mem, 's b c -> s (t b) c', t=t)
+            sentence_original_memory.append(sentence_mem)
+            
+        for i in range(len(text_queries_inverse)):
+            sentence = [text_queries_inverse[i]]
+            sentence_mem, _ = self.forward_text(sentence, device)
+            sentence_mem = repeat(sentence_mem, 's b c -> s (t b) c', t=t)
+            sentence_inverse_memory.append(sentence_mem)
 
         vid_embeds = rearrange(vid_embeds, 't b c h w -> (h w) (t b) c')
         # Concat the image & text embeddings on the sequence dimension
         encoder_src_seq_original = torch.cat((vid_embeds, txt_memory_original), dim=0)
-        # encoder_src_seq_inverse = torch.cat((vid_embeds, txt_memory_inverse), dim=0)
         
         seq_mask = torch.cat((rearrange(vid_pad_mask, 't b h w -> (t b) (h w)'), txt_pad_mask_original), dim=1)
         # vid_pos_embed is: [T*B, H, W, d_model]
@@ -91,7 +101,7 @@ class MultimodalTransformer(nn.Module):
         # hs is [L, N, T*B, C] where L is number of layers in the decoder
         hs = self.decoder(tgt, memory, memory_key_padding_mask=seq_mask, pos=pos_embed, query_pos=obj_queries)
         hs = rearrange(hs, 'l n (t b) c -> l t b n c', t=t, b=b)
-        return hs, vid_memory, txt_memory, (txt_memory_original, txt_memory_inverse)
+        return hs, vid_memory, txt_memory, (sentence_original_memory, sentence_inverse_memory)
 
     def forward_text(self, text_queries, device):
         tokenized_queries = self.tokenizer.batch_encode_plus(text_queries, padding='longest', return_tensors='pt')
