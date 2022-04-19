@@ -197,7 +197,8 @@ class Trainer:
             if self.is_main_process:
                 if self.dataset_name == 'a2d_sentences':
                     mAP_score = eval_metrics.get('mAP 0.5:0.95')
-                    self.save_checkpoint(mAP_score)
+                    # self.save_checkpoint(mAP_score)
+                    self.save_checkpoint(total_epoch_loss)
                 else:  # refer-youtube-vos:
                     self.save_checkpoint(total_epoch_loss)
                 eval_metrics.update({'epoch': self.epoch, 'epoch_loss': total_epoch_loss})
@@ -224,7 +225,6 @@ class Trainer:
             targets = [targets[i] for i in valid_indices.tolist()]
             outputs, _, _ = self.model(samples, valid_indices, text_queries_original)
             outputs.pop('aux_outputs', None)
-            import pdb; pdb.set_trace()
 
             outputs, targets = flatten_temporal_batch_dims(outputs, targets)
             processed_outputs = self.postprocessor(outputs, resized_padded_sample_size=samples.tensors.shape[-2:],
@@ -243,25 +243,26 @@ class Trainer:
             gathered_pred_lists = utils.all_gather(predictions)
             predictions = [p for p_list in gathered_pred_lists for p in p_list]
         eval_metrics = {}
-        if self.is_main_process:
-            coco_gt = COCO(self.config.dataset_coco_gt_format_path)
-            coco_pred = coco_gt.loadRes(predictions)
-            # import pdb; pdb.set_trace()
-            coco_eval = COCOeval(coco_gt, coco_pred, iouType='segm')
-            coco_eval.params.useCats = 0  # ignore categories as they are not predicted in ref-vos task
-            coco_eval.evaluate()
-            coco_eval.accumulate()
-            coco_eval.summarize()
-            ap_labels = ['mAP 0.5:0.95', 'AP 0.5', 'AP 0.75', 'AP 0.5:0.95 S', 'AP 0.5:0.95 M', 'AP 0.5:0.95 L']
-            ap_metrics = coco_eval.stats[:6]
-            eval_metrics = {l: m for l, m in zip(ap_labels, ap_metrics)}
-            if self.config.calculate_precision_and_iou_metrics:
-                precision_at_k, overall_iou, mean_iou = calculate_precision_at_k_and_iou_metrics(coco_gt, coco_pred)
-                eval_metrics.update({f'P@{k}': m for k, m in zip([0.5, 0.6, 0.7, 0.8, 0.9], precision_at_k)})
-                eval_metrics.update({'overall_iou': overall_iou, 'mean_iou': mean_iou})
-            print(eval_metrics)
-        if self.distributed:
-            dist.barrier()  # sync all processes before starting a new epoch or exiting
+        # if self.is_main_process:
+        #     coco_gt = COCO(self.config.dataset_coco_gt_format_path)
+        #     coco_pred = coco_gt.loadRes(predictions)
+        #     # import pdb; pdb.set_trace()
+        #     coco_eval = COCOeval(coco_gt, coco_pred, iouType='segm')
+        #     coco_eval.params.useCats = 0  # ignore categories as they are not predicted in ref-vos task
+        #     coco_eval.evaluate()
+        #     coco_eval.accumulate()
+        #     coco_eval.summarize()
+        #     ap_labels = ['mAP 0.5:0.95', 'AP 0.5', 'AP 0.75', 'AP 0.5:0.95 S', 'AP 0.5:0.95 M', 'AP 0.5:0.95 L']
+        #     ap_metrics = coco_eval.stats[:6]
+        #     eval_metrics = {l: m for l, m in zip(ap_labels, ap_metrics)}
+        #     if self.config.calculate_precision_and_iou_metrics:
+        #         precision_at_k, overall_iou, mean_iou = calculate_precision_at_k_and_iou_metrics(coco_gt, coco_pred)
+        #         eval_metrics.update({f'P@{k}': m for k, m in zip([0.5, 0.6, 0.7, 0.8, 0.9], precision_at_k)})
+        #         eval_metrics.update({'overall_iou': overall_iou, 'mean_iou': mean_iou})
+        #     print(eval_metrics)
+        # if self.distributed:
+        #     dist.barrier()  # sync all processes before starting a new epoch or exiting
+        print()
         return eval_metrics
 
     @torch.no_grad()
@@ -314,7 +315,8 @@ class Trainer:
         self.epoch = checkpoint['epoch'] + 1  # the epoch after the one saved is about to begin
         self.total_epochs = checkpoint['total_epochs']
         if self.dataset_name == 'a2d_sentences':
-            self.best_mAP = checkpoint['best_mAP']
+            self.best_loss = checkpoint['best_loss']
+            # self.best_mAP = checkpoint['best_mAP']
         else:  # refer-youtube-vos
             self.best_loss = checkpoint['best_loss']
         model_without_ddp = self.model.module if isinstance(self.model, DDP) else self.model
@@ -337,11 +339,19 @@ class Trainer:
             'grad_scaler_state_dict': self.grad_scaler.state_dict()
         }
         if self.dataset_name == 'a2d_sentences':
-            is_best_mAP = epoch_score > self.best_mAP
-            if is_best_mAP:
-                self.best_mAP = epoch_score
+            # import pdb; pdb.set_trace()
+            # is_best_mAP = epoch_score > self.best_mAP
+            # if is_best_mAP:
+            #     self.best_mAP = epoch_score
+            #     is_best = True
+            # checkpoint_dict['best_mAP'] = self.best_mAP
+            print("epoch_score: ", epoch_score, "best_loss: ", self.best_loss)
+            is_best_loss = epoch_score < self.best_loss
+            if is_best_loss:
+                self.best_loss = epoch_score
                 is_best = True
-            checkpoint_dict['best_mAP'] = self.best_mAP
+            checkpoint_dict['best_loss'] = self.best_loss
+            
         else:  # refer-youtube-vos
             is_best_loss = epoch_score < self.best_loss
             if is_best_loss:
