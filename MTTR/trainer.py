@@ -143,12 +143,19 @@ class Trainer:
                 with amp.autocast(enabled=self.config.enable_amp):
                     outputs, prediction_mask, (positive_encoded_txt, negative_encoded_txt) \
                         = self.model(samples, valid_indices, (text_queries_original, text_queries_inverse))
-                    # add contrastive loss here
-                    # import pdb; pdb.set_trace()
-                    contrastive_loss = ContrastiveLoss(prediction_mask, positive_encoded_txt, negative_encoded_txt)
                     
+                    # add contrastive loss here
+                    contrastive_loss = ContrastiveLoss()
+                    ct_loss = contrastive_loss(prediction_mask, positive_encoded_txt, negative_encoded_txt, self.device)
+                    
+                    # add contrastive loss to the dictionary
                     loss_dict = self.criterion(outputs, targets)
+                    loss_dict['contrastive_learn'] = ct_loss
+                    
+                    # add contrastive loss's weight to the dictionary
                     weight_dict = self.criterion.weight_dict
+                    weight_dict['contrastive_learn'] = 3
+                    
                     losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
                 # reduce losses over all GPUs for logging purposes
