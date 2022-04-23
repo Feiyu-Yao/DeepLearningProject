@@ -2,6 +2,7 @@
 This file contains implementations for the precision@k and IoU (mean, overall) evaluation metrics.
 """
 import torch
+from torch import nn
 from tqdm import tqdm
 from pycocotools.coco import COCO
 from pycocotools.mask import decode
@@ -30,8 +31,14 @@ def calculate_precision_at_k_and_iou_metrics(coco_gt: COCO, coco_pred: COCO):
             pred_annot = sorted(pred_annots, key=lambda a: a['score'])[-1]  # choose pred with highest score
         pred_mask = decode(pred_annot['segmentation'])
         try:
-            iou, intersection, union = compute_iou(torch.tensor(pred_mask).unsqueeze(0),
-                                               torch.tensor(gt_mask).unsqueeze(0))
+            pred_mask_ex = torch.tensor(pred_mask).unsqueeze(0)
+            gt_mask_ex = torch.tensor(gt_mask).unsqueeze(0)
+            if (pred_mask_ex.shape[2] != gt_mask_ex.shape[2]):
+                # upsample gt_mask
+                gt_mask_ex = torch.tensor(gt_mask_ex)
+                gt_mask_ex = nn.functional.upsample(gt_mask_ex, size=pred_mask_ex.shape[2])
+                gt_mask_ex = gt_mask_ex.cpu().detach().numpy()
+            iou, intersection, union = compute_iou(pred_mask_ex, gt_mask_ex)
         except:
             import pdb; pdb.set_trace()
             print()
